@@ -14,6 +14,14 @@ def hconcat_resize(img_list, interpolation=cv2.INTER_CUBIC):
     return cv2.hconcat(im_list_resize)
 
 
+def one_channel_to_three_channel(image, dest):
+    result = np.zeros_like(dest)
+    result[:, :, 0] = image
+    result[:, :, 1] = image
+    result[:, :, 2] = image
+    return result
+
+
 def main():
     # Parameters for Shi-Tomasi corner detection
     feature_params = dict(maxCorners=300, qualityLevel=0.2, minDistance=2, blockSize=7)
@@ -40,9 +48,11 @@ def main():
     # bgs = cv2.bgsegm.createBackgroundSubtractorLSBP()
     bgs = cv2.createBackgroundSubtractorMOG2()
     # bgs = cv2.bgsegm.createBackgroundSubtractorMOG()
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (35, 35))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
     min_dist = 90
-    min_optim = 4.5
+    min_optim = 3.5
 
     width, height = first_frame.shape[:2]
     car_obj = OrderedDict()
@@ -55,10 +65,8 @@ def main():
         if not ret:
             break
         # Creates an image filled with zero intensities with the same dimensions as the frame - for later drawing purposes
-        mask = np.zeros_like(first_frame)
         bin_image = np.zeros((width, height))
         cen_image = np.zeros((width, height))
-        dir_image = np.zeros((width, height))
         frame = cv2.resize(frame, (frame.shape[1] // 3, frame.shape[0] // 3))
         # Converts each frame to grayscale - we previously only converted the first frame to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -74,12 +82,29 @@ def main():
         # ************* background subtraction ***************
         frame = cv2.GaussianBlur(frame, (3, 3), cv2.BORDER_DEFAULT)
         bg_mask = bgs.apply(frame)
-        bg_mask = cv2.erode(bg_mask, kernel, iterations=1)
-        bg_mask = cv2.dilate(bg_mask, kernel, iterations=2)
-        bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN, kernel)
-        bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        bg_mask_3channel = one_channel_to_three_channel(bg_mask, frame)
+
+        # smaller mask
+        bg_mask = cv2.erode(bg_mask, kernel, iterations=3)
+        erode = one_channel_to_three_channel(bg_mask, frame)
+
+        # fill inside mask
+        bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_CLOSE, kernel_close)
+
+        # convert mask to binary
+        _, bg_mask = cv2.threshold(bg_mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        # smaller mask
+        bg_mask = cv2.erode(bg_mask, kernel_erode, iterations=1)
+
+        # bg_mask = cv2.dilate(bg_mask, kernel, iterations=2)
+        # dilate = one_channel_to_three_channel(bg_mask, frame)
+        closing = one_channel_to_three_channel(bg_mask, frame)
+        combi = hconcat_resize([bg_mask_3channel, erode, closing])
+        # bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN, kernel)
+        # bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
         contours = cv2.findContours(bg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
-        contours = list(filter(lambda x: cv2.contourArea(x) > 900, contours))
+        contours = list(filter(lambda x: cv2.contourArea(x) > 300, contours))
         bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
         # ************* background subtraction ***************
 
@@ -93,13 +118,11 @@ def main():
 
             dist = b - d
 
-            bin_image[d, c] = 255
-            dir_image[d, c] = 100
-
             dist = math.sqrt((b - d)**2 + (c - a)**2)
             if dist > min_optim:
+                bin_image[d, c] = 255
                 # Draws line between new and old position with green color and 2 thickness
-                mask = cv2.line(mask, (a, b), (c, d), color, 2)
+                frame = cv2.line(frame, (a, b), (c, d), color, 2)
                 # Draws filled circle (thickness of -1) at new position with green color and radius of 3
                 frame = cv2.circle(frame, (a, b), 3, color, -1)
                 for x, y, w, h in bboxes:
@@ -107,10 +130,27 @@ def main():
                     if x <= a and a <= x + w and y <= b and b <= y + h:
                         final_bboxes.append((x, y, w, h))
 
+        # create center of optical flow
+        for x, y, w, h in final_bboxes:
+            car = bin_image[y:y + h, x:x + w]
+            coords = cv2.findNonZero(car)
+            car_cx = []
+            car_cy = []
+            if coords is not None:
+                for coord in coords:
+                    car_cx.append(coord[0][0])
+                    car_cy.append(coord[0][1])
+                cx = x + int(np.mean(car_cx))
+                cy = y + int(np.mean(car_cy))
+                cen_image[cy, cx] = 255
+        cen_image = cv2.dilate(cen_image, kernel, iterations=15)
+        cen_image = cen_image.astype(np.uint8)
+        contours = cv2.findContours(cen_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        final_bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
+
         for x, y, w, h in final_bboxes:
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             cx, cy = int(x + w // 2), int(y + h // 2)
-            cen_image[cy, cx] = 1
             centroid = np.array([[cx, cy]])
 
             if len(car_obj) == 0:
@@ -131,22 +171,16 @@ def main():
                     nextcar_id += 1
             cv2.putText(frame, text='carID: ' + str(nextcar_id), org=(cx, cy),
                         fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=1.0, color=(255, 0, 255), thickness=3, lineType=cv2.LINE_AA)
-        # Overlays the optical flow tracks on the original frame
-        output = cv2.add(frame, mask)
+
         # Updates previous frame
         prev_gray = gray.copy()
         # Updates previous good feature points
         prev = good_new.reshape(-1, 1, 2)
         # Opens a new window and displays the output frame
-        mask = np.zeros_like(output)
-        mask[:, :, 0] = bg_mask
-        mask[:, :, 1] = bg_mask
-        mask[:, :, 2] = bg_mask
-        binary = np.zeros_like(output)
-        binary[:, :, 0] = bin_image
-        binary[:, :, 1] = bin_image
-        binary[:, :, 2] = bin_image
-        result = hconcat_resize([output, binary, mask])
+        binary = one_channel_to_three_channel(bin_image, frame)
+        center = one_channel_to_three_channel(cen_image, frame)
+        result = hconcat_resize([frame, binary, center])
+        result = cv2.vconcat([result, combi])
         cv2.imshow("result", result)
         # Frames are read by intervals of 10 milliseconds. The programs breaks out of the while loop when the user presses the 'q' key
         key = cv2.waitKey(10) & 0xFF
