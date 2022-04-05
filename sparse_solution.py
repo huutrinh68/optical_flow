@@ -5,6 +5,15 @@ from scipy.spatial import distance
 from collections import OrderedDict
 
 
+def hconcat_resize(img_list, interpolation=cv2.INTER_CUBIC):
+    # take minimum hights
+    h_min = min(img.shape[0] for img in img_list)
+    # image resizing
+    im_list_resize = [cv2.resize(img, (int(img.shape[1] * h_min / img.shape[0]), h_min), interpolation=interpolation) for img in img_list]
+    # return final image
+    return cv2.hconcat(im_list_resize)
+
+
 def main():
     # Parameters for Shi-Tomasi corner detection
     feature_params = dict(maxCorners=300, qualityLevel=0.2, minDistance=2, blockSize=7)
@@ -12,6 +21,8 @@ def main():
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
     cap = cv2.VideoCapture("./20211215_102922.mp4")
+    # cap = cv2.VideoCapture("./20211211_194628.mp4")
+
     # Variable for color to draw optical flow track
     color = (0, 255, 0)
     # ret = a boolean return value from getting the frame, first_frame = the first frame in the entire video sequence
@@ -22,8 +33,6 @@ def main():
     # Finds the strongest corners in the first frame by Shi-Tomasi method - we will track the optical flow for these corners
     # https://docs.opencv2.org/3.0-beta/modules/imgproc/doc/feature_detection.html#goodfeaturestotrack
     prev = cv2.goodFeaturesToTrack(prev_gray, mask=None, **feature_params)
-    # Creates an image filled with zero intensities with the same dimensions as the frame - for later drawing purposes
-    mask = np.zeros_like(first_frame)
 
     # google summer code for background subtraction
     # bgs = cv2.bgsegm.createBackgroundSubtractorGSOC()
@@ -45,6 +54,8 @@ def main():
         ret, frame = cap.read()
         if not ret:
             break
+        # Creates an image filled with zero intensities with the same dimensions as the frame - for later drawing purposes
+        mask = np.zeros_like(first_frame)
         bin_image = np.zeros((width, height))
         cen_image = np.zeros((width, height))
         dir_image = np.zeros((width, height))
@@ -62,14 +73,12 @@ def main():
 
         # ************* background subtraction ***************
         frame = cv2.GaussianBlur(frame, (3, 3), cv2.BORDER_DEFAULT)
-        maskIm = bgs.apply(frame)
-        # maskIm = cv2.dilate(maskIm, kernel, iterations=3)
-        maskIm = cv2.erode(maskIm, kernel, iterations=1)
-        maskIm = cv2.dilate(maskIm, kernel, iterations=2)
-        maskIm = cv2.morphologyEx(maskIm, cv2.MORPH_OPEN, kernel)
-        maskIm = cv2.morphologyEx(maskIm, cv2.MORPH_CLOSE, kernel, iterations=2)
-        cv2.imshow('maskIm', maskIm)
-        contours = cv2.findContours(maskIm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        bg_mask = bgs.apply(frame)
+        bg_mask = cv2.erode(bg_mask, kernel, iterations=1)
+        bg_mask = cv2.dilate(bg_mask, kernel, iterations=2)
+        bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN, kernel)
+        bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        contours = cv2.findContours(bg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
         contours = list(filter(lambda x: cv2.contourArea(x) > 900, contours))
         bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
         # ************* background subtraction ***************
@@ -84,16 +93,15 @@ def main():
 
             dist = b - d
 
-            if dist > min_optim:
-                bin_image[d, c] = 1
-                dir_image[d, c] = 100
+            bin_image[d, c] = 255
+            dir_image[d, c] = 100
 
             dist = math.sqrt((b - d)**2 + (c - a)**2)
             if dist > min_optim:
                 # Draws line between new and old position with green color and 2 thickness
-                # mask = cv2.line(mask, (a, b), (c, d), color, 2)
+                mask = cv2.line(mask, (a, b), (c, d), color, 2)
                 # Draws filled circle (thickness of -1) at new position with green color and radius of 3
-                # frame = cv2.circle(frame, (a, b), 3, color, -1)
+                frame = cv2.circle(frame, (a, b), 3, color, -1)
                 for x, y, w, h in bboxes:
                     # if x <= a and a <= x + w and y <= b and b <= y + h and w > 100:
                     if x <= a and a <= x + w and y <= b and b <= y + h:
@@ -130,11 +138,22 @@ def main():
         # Updates previous good feature points
         prev = good_new.reshape(-1, 1, 2)
         # Opens a new window and displays the output frame
-        cv2.imshow("sparse optical flow", output)
-        cv2.imshow("bin_image", bin_image)
+        mask = np.zeros_like(output)
+        mask[:, :, 0] = bg_mask
+        mask[:, :, 1] = bg_mask
+        mask[:, :, 2] = bg_mask
+        binary = np.zeros_like(output)
+        binary[:, :, 0] = bin_image
+        binary[:, :, 1] = bin_image
+        binary[:, :, 2] = bin_image
+        result = hconcat_resize([output, binary, mask])
+        cv2.imshow("result", result)
         # Frames are read by intervals of 10 milliseconds. The programs breaks out of the while loop when the user presses the 'q' key
-        if cv2.waitKey(10) & 0xFF == ord('q'):
+        key = cv2.waitKey(10) & 0xFF
+        if key == ord('q'):
             break
+        if key == ord('p'):
+            cv2.waitKey(-1)
     # The following frees up resources and closes all windows
     cap.release()
     cv2.destroyAllWindows()
