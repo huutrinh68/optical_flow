@@ -28,8 +28,8 @@ def main():
     # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
-    cap = cv2.VideoCapture("./20211215_102922.mp4")
-    # cap = cv2.VideoCapture("./20211211_194628.mp4")
+    # cap = cv2.VideoCapture("./20211215_102922.mp4")
+    cap = cv2.VideoCapture("./20211211_194628.mp4")
 
     # Variable for color to draw optical flow track
     color = (0, 255, 0)
@@ -51,13 +51,16 @@ def main():
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
     kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
-    min_dist = 90
+    min_dist = 110
     min_optim = 3.5
 
     width, height = first_frame.shape[:2]
     car_obj = OrderedDict()
     count_flag = OrderedDict()
     nextcar_id = 1
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter("demo.mp4", fourcc, 30, (1920, 720), True)
 
     while(cap.isOpened()):
         # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
@@ -182,6 +185,7 @@ def main():
         result = hconcat_resize([frame, binary, center])
         result = cv2.vconcat([result, combi])
         cv2.imshow("result", result)
+        writer.write(result)
         # Frames are read by intervals of 10 milliseconds. The programs breaks out of the while loop when the user presses the 'q' key
         key = cv2.waitKey(10) & 0xFF
         if key == ord('q'):

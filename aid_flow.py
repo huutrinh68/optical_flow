@@ -108,7 +108,6 @@ feature_params = dict(maxCorners=maxCorners,
 # 最初のフレームの処理
 ######################################################
 ret, old_frame = cap.read()
-print(old_frame.shape)
 old_frame = cv2.resize(old_frame, (old_frame.shape[1] // 2, old_frame.shape[0] // 2))
 old_gray = cv2.cvtColor(old_frame, cv2.COLOR_BGR2GRAY)
 
