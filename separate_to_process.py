@@ -1,7 +1,7 @@
 import numpy as np
-import cv2
-import math
 import time
+import cv2
+# import time
 from scipy.spatial import distance
 from collections import OrderedDict
 
@@ -42,11 +42,11 @@ def set_points(frame):
 
 
 def on_lane(frame, lanes, cx, cy):
-    width, height = frame.shape[:2]
+    height, width = frame.shape[:2]
 
     mask_images = []
     for lane in lanes.values():
-        mask_image = np.zeros((width, height))
+        mask_image = np.zeros((height, width))
         cv2.fillPoly(mask_image, pts=[lane], color=255)
         mask_images.append(mask_image)
 
@@ -55,7 +55,37 @@ def on_lane(frame, lanes, cx, cy):
         if mask_image[cy, cx] == 255:
             lane_id = i
             break
+
     return lane_id
+
+
+def background_subtraction(bgs, frame):
+    # ************* background subtraction ***************
+    frame = cv2.GaussianBlur(frame, (3, 3), cv2.BORDER_DEFAULT)
+    binary_mask = bgs.apply(frame)
+    # smaller mask
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    binary_mask = cv2.erode(binary_mask, kernel, iterations=3)
+    # fill inside mask
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
+    binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel_close)
+    # convert mask to binary
+    _, binary_mask = cv2.threshold(binary_mask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # smaller mask
+    kernel_erode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    binary_mask = cv2.erode(binary_mask, kernel_erode, iterations=1)
+    contours = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+    contours = list(filter(lambda x: cv2.contourArea(x) > 300, contours))
+    # bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
+    # ************* background subtraction ***************
+    return binary_mask, contours
+
+
+def draw_lanes(frame, lanes):
+    for lane in lanes.values():
+        lane = lane.reshape((-1, 1, 2))
+        cv2.polylines(frame, [lane], True, (0, 255, 255))
+    return frame
 
 
 def main():
@@ -81,11 +111,11 @@ def main():
     # httdelta1://docs.opencv2.org/3.0-beta/modules/imgproc/doc/feature_detection.html#goodfeaturestotrack
     prev = cv2.goodFeaturesToTrack(prev_gray, mask=None, **feature_params)
 
-    width, height = first_frame.shape[:2]
+    height, width = first_frame.shape[:2]
     min_dist = 100
     w1_size = 50
     h1_size = 50
-    car_area = [0, height]
+    car_area = [int(height * 0.25), int(height * 1.0) - 5]
     count_down = 0
     count_up = 0
     dis_move = 3.5
@@ -99,42 +129,59 @@ def main():
     writer = cv2.VideoWriter("demo.mp4", fourcc, 30, (1280, 720), True)
 
     # ************setting lane*************
-    # set_points(first_frame)
-    if video_path == "./20211215_102922.mp4":
-        lanes = {
-            0: [[197, 6], [272, 7], [214, 357], [39, 357]],
-            1: [[289, 4], [339, 5], [514, 356], [350, 356]]
-        }
-    else:
-        lanes = {
-            0: [[153, 4], [215, 4], [87, 359], [2, 357]],
-            1: [[232, 3], [292, 4], [267, 356], [154, 356]],
-            2: [[338, 3], [391, 3], [515, 357], [378, 356]]
-        }
+    set_points(first_frame)
+    lanes = {}
+    for i in range(len(points) // 4):
+        lanes[i] = [points[i * 4 + j] for j in range(4)]
+    if len(lanes) == 0:
+        if video_path == "./20211215_102922.mp4":
+            lanes = {
+                0: [[197, 6], [272, 7], [214, 357], [39, 357]],
+                1: [[289, 4], [339, 5], [514, 356], [350, 356]]
+            }
+        else:
+            lanes = {
+                0: [[45, 182], [318, 200], [331, 354], [2, 357]]
+            }
     for i in range(len(lanes)):
         lanes[i] = np.array(lanes[i])
     # ************setting lane*************
 
+    bgs = cv2.createBackgroundSubtractorMOG2()
+
+    frame_num = 0
     while(cap.isOpened()):
         start_time = time.perf_counter()
         # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
         ret, frame = cap.read()
         if not ret:
             break
+        frame_num += 1
+        if frame_num % 1 != 0:
+            continue
         # Creates an image filled with zero intensities with the same dimensions as the frame - for later drawing purposes
-        bin_image = np.zeros((width, height))
-        dir_image = np.zeros((width, height))
-        cen_image = np.zeros((width, height))
+        bin_image = np.zeros((height, width))
+        dir_image = np.zeros((height, width))
+        cen_image = np.zeros((height, width))
         frame = cv2.resize(frame, (frame.shape[1] // 3, frame.shape[0] // 3))
         # ****** setting lane******
-        mask_image = np.zeros((width, height))
-        visual_frame = frame.copy()
+        lanes_mask = np.zeros((height, width))
         for lane in lanes.values():
-            cv2.fillPoly(visual_frame, pts=[lane], color=(255, 255, 255))
-            cv2.fillPoly(mask_image, pts=[lane], color=255)
-        cv2.imshow("visual_frame", visual_frame)
-        cv2.imshow("mask_image", mask_image)
+            cv2.fillPoly(lanes_mask, pts=[lane], color=255)
+        # lanes_mask = cv2.fillPoly(lanes_mask, pts=[list(lanes.values())[0]], color=255)
+        # _, lanes_mask = cv2.threshold(lanes_mask, 0, 255, cv2.THRESH_BINARY)
+        # frame = frame.astype(np.uint8)
+        # lanes_mask = lanes_mask.astype(np.uint8)
+        # frame = cv2.bitwise_and(frame, frame, mask=lanes_mask)
         # ****** setting lane******
+
+        # ****** background subtraction ********
+        binary_mask, contours = background_subtraction(bgs, frame)
+        binary_mask = binary_mask.astype(np.uint8)
+        lanes_mask = lanes_mask.astype(np.uint8)
+        bin_image = cv2.bitwise_and(binary_mask, lanes_mask)
+        bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
+        # ****** background subtraction ********
 
         # Converts each frame to grayscale - we previously only converted the first frame to grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -147,8 +194,7 @@ def main():
         # Selects good feature points for next position
         good_new = next[status == 1].astype(int)
 
-        delta1 = 50
-        delta2 = 30
+        delta2 = 50
         for i, (new, old) in enumerate(zip(good_new, good_old)):
             a, b = new.ravel()
             c, d = old.ravel()
@@ -159,28 +205,38 @@ def main():
             frame = cv2.circle(frame, (a, b), 3, color, -1)
 
             # moving distance is bigger than dis_move and lying on lane
-            # if dis > dis_move and on_lane(frame, lanes, c, d):
-            if dis > dis_move:
-                bin_image[d - delta1:d + delta1, int(c) - delta1:int(c) + delta1] = 255
+            if dis > dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 100
-            elif dis < - dis_move:
-                bin_image[d - delta1:d + delta1, int(c) - delta1:int(c) + delta1] = 255
+            elif dis < - dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 200
 
-        cv2.imshow("before opening", bin_image)
-        # bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN, kernel)
-        # bg_mask = cv2.morphologyEx(bg_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-        opening_size = 65
-        kernel_size = (opening_size, opening_size)
-        kernel_opening = cv2.getStructuringElement(cv2.MORPH_RECT, kernel_size)
-        bin_image = cv2.morphologyEx(bin_image, cv2.MORPH_OPEN, kernel_opening, iterations=2)
+        for x, y, w, h in bboxes:
+            car = bin_image[y:y + h, x:x + w]
+            car_dir = dir_image[y:y + h, x:x + w]
+            car = car_dir.astype(np.uint8)
+            car_dir = car_dir.astype(np.uint8)
+            and_image = cv2.bitwise_and(car, car_dir)
+            overlap = cv2.findNonZero(and_image)
+            if overlap is not None:
+                coords = cv2.findNonZero(car)
+                car_cx = []
+                car_cy = []
+                if coords is not None:
+                    for coord in coords:
+                        car_cx.append(coord[0][0])
+                        car_cy.append(coord[0][1])
+                    cx = x + int(np.mean(car_cx))
+                    cy = y + int(np.mean(car_cy))
+                    cen_image[cy - 10: cy + 10, cx - 10:cx + 10] = 255
 
-        # bitwise
-        bin_image = bin_image.astype(np.uint8)
-        contours = cv2.findContours(bin_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        cen_image = cv2.dilate(cen_image, kernel, iterations=15)
+        cen_image = cen_image.astype(np.uint8)
+        contours = cv2.findContours(cen_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
 
-        for c in contours:
-            (x1, y1, w1, h1) = cv2.boundingRect(c)
+        for bbox in bboxes:
+            x1, y1, w1, h1 = bbox
 
             if w1 > w1_size and h1 > h1_size:
                 cv2.rectangle(frame, (x1, y1), (x1 + w1, y1 + h1), color, 5)
@@ -194,37 +250,47 @@ def main():
                 lane_id = on_lane(frame, lanes, cx, cy)
 
                 if len(car_obj) == 0:
-                    car_obj[nextcar_id] = centroid
+                    car_obj[nextcar_id] = [centroid, bbox]
                     count_flag[nextcar_id] = 0
                     car_lane[nextcar_id] = lane_id
                     nextcar_id += 1
                 else:
-                    objectCentroids = list(car_obj.values())
+                    objectCentroids = [obj[0] for obj in list(car_obj.values())]
                     D = distance.cdist(np.array(objectCentroids).reshape(-1, 2), centroid)
                     D = D.reshape(-1)
                     inx_d = np.argmin(D)
 
                     if D[inx_d] <= min_dist and list(car_lane.items())[inx_d][1] == lane_id or lane_id is None:
-                        car_obj[inx_d + 1] = centroid
+                        car_obj[inx_d + 1] = [centroid, bbox]
                     else:
-                        car_obj[nextcar_id] = centroid
+                        car_obj[nextcar_id] = [centroid, bbox]
                         count_flag[nextcar_id] = 0
                         car_lane[nextcar_id] = lane_id
                         nextcar_id += 1
 
+        # overlap bin_mask with dir_image
+        dir_image = dir_image.astype(np.uint8)
+        dir_image = cv2.bitwise_and(bin_image, dir_image)
+
         for carID, val in car_obj.items():
-            obj_cx = val[0, 0]
-            obj_cy = val[0, 1]
+            obj_cx = val[0][0][0]
+            obj_cy = val[0][0][1]
+            x, y, w, h = val[1]
+            tmp = dir_image[y: y + h, x: x + w]
+            tmp = tmp.astype(np.uint8)
 
             if obj_cy >= car_area[0] and obj_cy <= car_area[1]:
+                # radius = 10
+                # red_direc_count = np.count_nonzero(dir_image[obj_cy - radius:obj_cy + radius, obj_cx - radius:obj_cx + radius] == 200)
+                # blue_direc_count = np.count_nonzero(dir_image[obj_cy - radius:obj_cy + radius, obj_cx - radius:obj_cx + radius] == 100)
+                red_direc_count = np.count_nonzero(tmp == 200)
+                blue_direc_count = np.count_nonzero(tmp == 100)
                 if count_flag[carID] == 0:
-                    red_direc_count = np.count_nonzero(dir_image[obj_cy - 10:obj_cy + 10, obj_cx - 10:obj_cx + 10] == 200)
-                    blue_direc_count = np.count_nonzero(dir_image[obj_cy - 10:obj_cy + 10, obj_cx - 10:obj_cx + 10] == 100)
                     if blue_direc_count > red_direc_count:
                         count_down += 1
                         cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
                         cv2.arrowedLine(frame, (obj_cx, obj_cy), (obj_cx, obj_cy + 100), [240, 30, 30], 10, tipLength=0.5)
-                    elif blue_direc_count <= red_direc_count:
+                    elif blue_direc_count < red_direc_count:
                         count_up += 1
                         cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
                         cv2.arrowedLine(frame, (obj_cx, obj_cy), (obj_cx, obj_cy - 100), [30, 30, 240], 10, tipLength=0.5)
@@ -265,6 +331,9 @@ def main():
                     thickness=3,
                     lineType=cv2.LINE_AA)
         # Opens a new window and displays the output frame
+        frame = draw_lanes(frame, lanes)
+        cv2.line(frame, (0, car_area[0]), (width, car_area[0]), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
+        cv2.line(frame, (0, car_area[1] - 5), (width, car_area[1] - 5), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
         binary = one_channel_to_three_channel(bin_image, frame)
         center = one_channel_to_three_channel(cen_image, frame)
         direct = one_channel_to_three_channel(dir_image, frame)
