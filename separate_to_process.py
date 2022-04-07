@@ -143,7 +143,7 @@ def main():
 
     frame_num = 0
     ct = CentroidTracker()
-    counted_ids = []
+    counted_ids = {}
     while(cap.isOpened()):
         start_time = time.perf_counter()
         # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
@@ -226,7 +226,7 @@ def main():
 
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         cen_image = cv2.dilate(cen_image, kernel, iterations=15)
-        cen_image = cv2.erode(cen_image, kernel, iterations=5)
+        cen_image = cv2.erode(cen_image, kernel, iterations=1)
         cen_image = cen_image.astype(np.uint8)
         contours = cv2.findContours(cen_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
         bboxes = list(map(lambda x: cv2.boundingRect(x), contours))
@@ -257,17 +257,20 @@ def main():
             if obj_cy >= car_area[0] and obj_cy <= car_area[1]:
                 red_direc_count = np.count_nonzero(tmp == 200)
                 blue_direc_count = np.count_nonzero(tmp == 100)
-                if objectID not in counted_ids:
+                lane_id = on_lane(frame, lanes, obj_cx, obj_cy)
+
+                # not counted and center on lane
+                if objectID not in list(counted_ids.values()) and lane_id is not None:
                     if blue_direc_count > red_direc_count:
                         count_down += 1
                         cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
                         cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        counted_ids.append(objectID)
+                        counted_ids[objectID] = objectID
                     elif blue_direc_count < red_direc_count:
                         count_up += 1
                         cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
                         cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        counted_ids.append(objectID)
+                        counted_ids[objectID] = objectID
         print(counted_ids)
         # ******** Counting **********
 
