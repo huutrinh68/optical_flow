@@ -3,8 +3,22 @@ import numpy as np
 import time
 import cv2
 from tracker import CentroidTracker
+import collections
+
 
 points = []
+
+
+class FPS:
+    def __init__(self, avarageof=5):
+        self.frametimestamps = collections.deque(maxlen=avarageof)
+
+    def __call__(self):
+        self.frametimestamps.append(time.time())
+        if(len(self.frametimestamps) > 1):
+            return len(self.frametimestamps) / (self.frametimestamps[-1] - self.frametimestamps[0])
+        else:
+            return 0.0
 
 
 def hconcat_resize(img_list, interpolation=cv2.INTER_CUBIC):
@@ -104,8 +118,8 @@ def main():
     # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
-    video_path = "./20211215_102922.mp4"
-    # video_path = "./20211211_194628.mp4"
+    # video_path = "./20211215_102922.mp4"
+    video_path = "./20211211_194628.mp4"
     cap = cv2.VideoCapture(video_path)
 
     color = (0, 255, 0)
@@ -162,8 +176,9 @@ def main():
     ct = CentroidTracker()
     counted_ids = {}
     os.makedirs('./outputs/', exist_ok=True)
+    frame_per_second = FPS()
     while(cap.isOpened()):
-        start_time = time.perf_counter()
+        # start_time = time.perf_counter()
         # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
         ret, frame = cap.read()
         if not ret:
@@ -332,9 +347,10 @@ def main():
                     thickness=3,
                     lineType=cv2.LINE_AA)
 
-        end_time = time.perf_counter()
-        elapsed_time = end_time - start_time
-        fps = round(1 / elapsed_time)
+        # end_time = time.perf_counter()
+        # elapsed_time = end_time - start_time
+        # fps = round(1 / elapsed_time)
+        fps = round(frame_per_second())
 
         cv2.putText(origin,
                     text='FPS:' + str(fps),
