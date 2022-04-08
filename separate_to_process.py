@@ -4,6 +4,7 @@ import time
 import cv2
 from tracker import CentroidTracker
 import collections
+import copy
 
 
 points = []
@@ -118,8 +119,8 @@ def main():
     # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
-    # video_path = "./20211215_102922.mp4"
-    video_path = "./20211211_194628.mp4"
+    video_path = "./20211215_102922.mp4"
+    # video_path = "./20211211_194628.mp4"
     cap = cv2.VideoCapture(video_path)
 
     color = (0, 255, 0)
@@ -177,6 +178,11 @@ def main():
     counted_ids = {}
     os.makedirs('./outputs/', exist_ok=True)
     frame_per_second = FPS()
+
+    lane_dirs = {}
+    for i in range(len(lanes)):
+        lane_dirs[i] = collections.deque(maxlen=3)
+
     while(cap.isOpened()):
         # start_time = time.perf_counter()
         # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
@@ -303,16 +309,41 @@ def main():
                     # not counted and center on lane
                     if objectID not in list(counted_ids.values()) and lane_id is not None:
                         if blue_direc_count > red_direc_count:
-                            count_down += 1
-                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            counted_ids[objectID] = objectID
+                            # add to lane
+                            lane_copy = copy.copy(lane_dirs[lane_id])
+                            lane_copy.append(100)
+                            # lane has not 3 item
+                            if len(lane_copy) < 3:
+                                count_down += 1
+                                lane_dirs[lane_id].append(100)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                counted_ids[objectID] = objectID
+                            elif len(lane_copy) == 3 and lane_copy.count(100) == 3:
+                                count_down += 1
+                                lane_dirs[lane_id].append(100)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                counted_ids[objectID] = objectID
                         elif blue_direc_count < red_direc_count:
-                            count_up += 1
-                            cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            counted_ids[objectID] = objectID
+                            # add to lane
+                            lane_copy = copy.copy(lane_dirs[lane_id])
+                            lane_copy.append(200)
+                            # lane has not 3 item
+                            if len(lane_copy) < 3:
+                                count_up += 1
+                                lane_dirs[lane_id].append(200)
+                                cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                counted_ids[objectID] = objectID
+                            elif len(lane_copy) == 3 and lane_copy.count(200) == 3:
+                                count_up += 1
+                                lane_dirs[lane_id].append(200)
+                                cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                counted_ids[objectID] = objectID
         # print(counted_ids)
+        # print(lane_dirs)
         # ******** Counting **********
 
         # Updates previous frame
