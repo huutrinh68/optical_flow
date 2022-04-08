@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import time
 import cv2
@@ -87,6 +88,15 @@ def draw_lanes(frame, lanes):
     return frame
 
 
+def draw_det_rois(frame, det_rois):
+    for det_roi in det_rois.values():
+        xmin, ymin, xmax, ymax = det_roi
+        # cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (255, 0, 0), 5)
+        frame = cv2.line(frame, (xmin, ymin), (xmax, ymin), (255, 0, 0), 2)
+        frame = cv2.line(frame, (xmin, ymax), (xmax, ymax), (255, 0, 0), 2)
+    return frame
+
+
 def main():
     global points
     # Parameters for Shi-Tomasi corner detection
@@ -94,8 +104,8 @@ def main():
     # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
-    # video_path = "./20211215_102922.mp4"
-    video_path = "./20211211_194628.mp4"
+    video_path = "./20211215_102922.mp4"
+    # video_path = "./20211211_194628.mp4"
     cap = cv2.VideoCapture(video_path)
 
     color = (0, 255, 0)
@@ -108,7 +118,6 @@ def main():
     # min size of car
     w1_size = 70
     h1_size = 70
-    car_area = [int(height * 0.65), int(height * 1.0) - 5]
     count_down = 0
     count_up = 0
     # movement quantity
@@ -122,21 +131,29 @@ def main():
     # ************setting lane*************
     set_points(first_frame)
     lanes = {}
+    det_rois = {}
+    assert len(points) % 4 == 0, "Please check your points input!"
     for i in range(len(points) // 4):
         lanes[i] = [points[i * 4 + j] for j in range(4)]
     if len(lanes) == 0:
         if video_path == "./20211215_102922.mp4":
             lanes = {
-                0: [[197, 6], [272, 7], [214, 357], [39, 357]],
-                1: [[289, 4], [339, 5], [514, 356], [350, 356]]
+                0: [[120, 126], [242, 135], [243, 232], [63, 229]],
+                1: [[294, 132], [412, 129], [464, 222], [304, 220]],
             }
         else:
             lanes = {
-                0: [[345, 186], [469, 190], [538, 358], [353, 357]],
-                1: [[45, 182], [318, 200], [331, 354], [2, 357]]
+                0: [[43, 160], [279, 164], [287, 295], [1, 296]],
+                1: [[349, 137], [476, 138], [537, 283], [371, 282]]
             }
     for i in range(len(lanes)):
+        xlist = [p[0] for p in lanes[i]]
+        ylist = [p[1] for p in lanes[i]]
+        xmin, ymin = min(xlist), min(ylist)
+        xmax, ymax = max(xlist), max(ylist)
+        det_rois[i] = (xmin, ymin, xmax, ymax)
         lanes[i] = np.array(lanes[i])
+
     # ************setting lane*************
 
     bgs = cv2.createBackgroundSubtractorMOG2()
@@ -144,6 +161,7 @@ def main():
     frame_num = 0
     ct = CentroidTracker()
     counted_ids = {}
+    os.makedirs('./outputs/', exist_ok=True)
     while(cap.isOpened()):
         start_time = time.perf_counter()
         # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
@@ -193,26 +211,32 @@ def main():
 
             dis = b - d
             a = c
-            frame = cv2.line(frame, (a, b), (c, d), color, 2)
-            frame = cv2.circle(frame, (a, b), 3, color, -1)
+            # frame = cv2.line(frame, (a, b), (c, d), color, 2)
+            # origin = cv2.line(origin, (a, b), (c, d), color, 2)
+            # frame = cv2.circle(frame, (a, b), 3, color, -1)
+            # origin = cv2.circle(origin, (a, b), 3, color, -1)
 
             # moving distance is bigger than dis_move and lying on lane
             if dis > dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 100
+                cv2.arrowedLine(frame, (a, b), (c, d), [240, 30, 30], 2, tipLength=0.5)
+                cv2.arrowedLine(origin, (a, b), (c, d), [240, 30, 30], 2, tipLength=0.5)
             elif dis < - dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 200
+                cv2.arrowedLine(frame, (a, b), (c, d), [30, 30, 240], 2, tipLength=0.5)
+                cv2.arrowedLine(origin, (a, b), (c, d), [30, 30, 240], 2, tipLength=0.5)
 
         for x, y, w, h in bboxes:
             car = bin_image[y:y + h, x:x + w]
             car_dir = dir_image[y:y + h, x:x + w]
             car = car_dir.astype(np.uint8)
             car_dir = car_dir.astype(np.uint8)
-            and_image = cv2.bitwise_and(car, car_dir)
-            overlap = cv2.findNonZero(and_image)
+            overlap = cv2.bitwise_and(car, car_dir)
+            is_overlap = cv2.findNonZero(overlap)
 
             onlane = on_lane(frame, lanes, x + w // 2, y + h // 2)
             # center in mask
-            if overlap is not None and onlane is not None:
+            if is_overlap is not None and onlane is not None:
                 coords = cv2.findNonZero(car)
                 car_cx = []
                 car_cy = []
@@ -247,31 +271,33 @@ def main():
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5)
             cv2.rectangle(origin, (x1, y1), (x2, y2), color, 5)
             text = "ID {}".format(objectID + 1)
-            cv2.putText(origin, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-            cv2.circle(origin, (centroid[0], centroid[1]), 4, (0, 0, 255), -1)
+            cv2.putText(origin, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            cv2.circle(origin, (centroid[0], centroid[1]), 4, color, -1)
             obj_cx, obj_cy = centroid[0], centroid[1]
 
             tmp = dir_image[y: y + h, x: x + w]
             tmp = tmp.astype(np.uint8)
 
-            if obj_cy >= car_area[0] and obj_cy <= car_area[1]:
-                red_direc_count = np.count_nonzero(tmp == 200)
-                blue_direc_count = np.count_nonzero(tmp == 100)
-                lane_id = on_lane(frame, lanes, obj_cx, obj_cy)
+            for det_roi in det_rois.values():
+                xmin, ymin, xmax, ymax = det_roi
+                if obj_cy >= ymin and obj_cy <= ymax:
+                    red_direc_count = np.count_nonzero(tmp == 200)
+                    blue_direc_count = np.count_nonzero(tmp == 100)
+                    lane_id = on_lane(frame, lanes, obj_cx, obj_cy)
 
-                # not counted and center on lane
-                if objectID not in list(counted_ids.values()) and lane_id is not None:
-                    if blue_direc_count > red_direc_count:
-                        count_down += 1
-                        cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        counted_ids[objectID] = objectID
-                    elif blue_direc_count < red_direc_count:
-                        count_up += 1
-                        cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        counted_ids[objectID] = objectID
-        print(counted_ids)
+                    # not counted and center on lane
+                    if objectID not in list(counted_ids.values()) and lane_id is not None:
+                        if blue_direc_count > red_direc_count:
+                            count_down += 1
+                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            counted_ids[objectID] = objectID
+                        elif blue_direc_count < red_direc_count:
+                            count_up += 1
+                            cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            counted_ids[objectID] = objectID
+        # print(counted_ids)
         # ******** Counting **********
 
         # Updates previous frame
@@ -329,10 +355,8 @@ def main():
         # Opens a new window and displays the output frame
         frame = draw_lanes(frame, lanes)
         origin = draw_lanes(origin, lanes)
-        cv2.line(frame, (0, car_area[0]), (width, car_area[0]), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
-        cv2.line(frame, (0, car_area[1] - 5), (width, car_area[1] - 5), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
-        cv2.line(origin, (0, car_area[0]), (width, car_area[0]), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
-        cv2.line(origin, (0, car_area[1] - 5), (width, car_area[1] - 5), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
+        frame = draw_det_rois(frame, det_rois)
+        origin = draw_det_rois(origin, det_rois)
         binary = one_channel_to_three_channel(bin_image, frame)
         center = one_channel_to_three_channel(cen_image, frame)
         direct = one_channel_to_three_channel(dir_image, frame)
@@ -342,6 +366,7 @@ def main():
         result = cv2.vconcat([result1, result2])
         cv2.imshow("result", result)
         writer.write(result)
+        cv2.imwrite("./outputs/frame_num_{}.png".format(str(frame_num).zfill(5)), result)
         # Frames are read by intervals of 10 milliseconds. The programs breaks out of the while loop when the user presses the 'q' key
         key = cv2.waitKey(10) & 0xFF
         if key == ord('q'):
