@@ -107,6 +107,14 @@ def draw_det_rois(frame, det_rois):
     return frame
 
 
+def put_text(frame, text, org, color):
+    cv2.putText(frame, text=str(text),
+                org=org,
+                fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                fontScale=1.0, color=color,
+                thickness=3, lineType=cv2.LINE_AA)
+
+
 def main():
     global points
     # Parameters for Shi-Tomasi corner detection
@@ -118,10 +126,11 @@ def main():
     # video_path = "./20211211_194628.mp4"
     video_path = "./VID20220410163628.mp4"
     cap = cv2.VideoCapture(video_path)
+    scale = 3
 
     color = (0, 255, 0)
     ret, first_frame = cap.read()
-    first_frame = cv2.resize(first_frame, (first_frame.shape[1] // 3, first_frame.shape[0] // 3))
+    first_frame = cv2.resize(first_frame, (first_frame.shape[1] // scale, first_frame.shape[0] // scale))
     prev_gray = cv2.cvtColor(first_frame, cv2.COLOR_BGR2GRAY)
     prev = cv2.goodFeaturesToTrack(prev_gray, mask=None, **feature_params)
 
@@ -153,10 +162,14 @@ def main():
                 0: [[120, 126], [242, 135], [243, 232], [63, 229]],
                 1: [[294, 132], [412, 129], [464, 222], [304, 220]],
             }
-        else:
+        elif video_path == "./20211211_194628.mp4":
             lanes = {
                 0: [[43, 160], [279, 164], [287, 295], [1, 296]],
                 1: [[349, 137], [476, 138], [537, 283], [371, 282]]
+            }
+        elif video_path == "./VID20220410163628.mp4":
+            lanes = {
+                0: [[59, 345], [234, 349], [308, 444], [3, 447]]
             }
     for i in range(len(lanes)):
         xlist = [p[0] for p in lanes[i]]
@@ -194,7 +207,7 @@ def main():
         bin_image = np.zeros((height, width))
         dir_image = np.zeros((height, width))
         cen_image = np.zeros((height, width))
-        frame = cv2.resize(frame, (frame.shape[1] // 3, frame.shape[0] // 3))
+        frame = cv2.resize(frame, (frame.shape[1] // scale, frame.shape[0] // scale))
         origin = frame.copy()
         # ****** setting lane******
         lanes_mask = np.zeros((height, width))
@@ -320,61 +333,20 @@ def main():
                             cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
                             cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
                             counted_ids[objectID] = objectID
-        # print(counted_ids)
-        # print(lane_dirs)
         # ******** Counting **********
 
         # Updates previous frame
         prev_gray = gray.copy()
-        # Updates previous good feature points
         prev = good_new.reshape(-1, 1, 2)
-        cv2.putText(origin, text='down ' + str(count_down),
-                    org=(frame.shape[1] * 2 // 3, frame.shape[0] - 10),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0, color=(0, 255, 255),
-                    thickness=3, lineType=cv2.LINE_AA)
-        cv2.putText(frame, text='down ' + str(count_down),
-                    org=(frame.shape[1] * 2 // 3, frame.shape[0] - 10),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0, color=(0, 255, 255),
-                    thickness=3, lineType=cv2.LINE_AA)
 
-        cv2.putText(origin,
-                    text='up ' + str(count_up),
-                    org=(frame.shape[1] // 4, frame.shape[0] - 10),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0,
-                    color=(0, 255, 255),
-                    thickness=3,
-                    lineType=cv2.LINE_AA)
-        cv2.putText(frame,
-                    text='up ' + str(count_up),
-                    org=(frame.shape[1] // 4, frame.shape[0] - 10),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0,
-                    color=(0, 255, 255),
-                    thickness=3,
-                    lineType=cv2.LINE_AA)
+        # put text
+        put_text(origin, 'down' + str(count_down), (origin.shape[1] * 2 // 3, origin.shape[0] - 10), (0, 255, 255))
+        put_text(frame, 'down' + str(count_down), (frame.shape[1] * 2 // 3, frame.shape[0] - 10), (0, 255, 255))
+        put_text(origin, 'up' + str(count_up), (origin.shape[1] // 4, origin.shape[0] - 10), (0, 255, 255))
+        put_text(frame, 'up' + str(count_up), (frame.shape[1] // 4, frame.shape[0] - 10), (0, 255, 255))
+        put_text(origin, 'FPS: ' + str(fps), (10, 30), (200, 255, 255))
+        put_text(frame, 'FPS: ' + str(fps), (10, 30), (200, 255, 255))
 
-        # end_time = time.perf_counter()
-        # elapsed_time = end_time - start_time
-        # fps = round(1 / elapsed_time)
-        cv2.putText(origin,
-                    text='FPS:' + str(fps),
-                    org=(10, 30),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0,
-                    color=(200, 255, 255),
-                    thickness=3,
-                    lineType=cv2.LINE_AA)
-        cv2.putText(frame,
-                    text='FPS:' + str(fps),
-                    org=(10, 30),
-                    fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                    fontScale=1.0,
-                    color=(200, 255, 255),
-                    thickness=3,
-                    lineType=cv2.LINE_AA)
         # Opens a new window and displays the output frame
         frame = draw_lanes(frame, lanes)
         origin = draw_lanes(origin, lanes)
@@ -390,13 +362,11 @@ def main():
         cv2.imshow("result", result)
         writer.write(result)
         cv2.imwrite("./outputs/frame_num_{}.png".format(str(frame_num).zfill(5)), result)
-        # Frames are read by intervals of 10 milliseconds. The programs breaks out of the while loop when the user presses the 'q' key
         key = cv2.waitKey(10) & 0xFF
         if key == ord('q'):
             break
         if key == ord('p'):
             cv2.waitKey(-1)
-    # The following frees up resources and closes all windows
     cap.release()
     cv2.destroyAllWindows()
 
