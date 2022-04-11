@@ -4,7 +4,6 @@ import time
 import cv2
 from tracker import CentroidTracker
 import collections
-import copy
 
 
 points = []
@@ -23,11 +22,8 @@ class FPS:
 
 
 def hconcat_resize(img_list, interpolation=cv2.INTER_CUBIC):
-    # take minimum hights
     h_min = min(img.shape[0] for img in img_list)
-    # image resizing
     im_list_resize = [cv2.resize(img, (int(img.shape[1] * h_min / img.shape[0]), h_min), interpolation=interpolation) for img in img_list]
-    # return final image
     return cv2.hconcat(im_list_resize)
 
 
@@ -48,7 +44,6 @@ def mouse_points(event, x, y, flags, params):
 def set_points(frame):
     cv2.imshow("first_frame", frame)
     cv2.setMouseCallback("first_frame", mouse_points)
-    # Frames are read by intervals of 10 milliseconds. The programs breaks out of the while loop when the user presses the 'q' key
     key = cv2.waitKey(0) & 0xFF
     if key == ord('q'):
         cv2.destroyAllWindows()
@@ -119,8 +114,9 @@ def main():
     # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
-    video_path = "./20211215_102922.mp4"
+    # video_path = "./20211215_102922.mp4"
     # video_path = "./20211211_194628.mp4"
+    video_path = "./VID20220410163628.mp4"
     cap = cv2.VideoCapture(video_path)
 
     color = (0, 255, 0)
@@ -136,12 +132,13 @@ def main():
     count_down = 0
     count_up = 0
     # movement quantity
-    dis_move = 3.5
+    dis_move = 2.5
     # use in dilation
     radius = 20
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter("demo.mp4", fourcc, 30, (1280, 720), True)
+    # writer = cv2.VideoWriter("demo.mp4", fourcc, 30, (1280, 720), True)
+    writer = cv2.VideoWriter("demo.mp4", fourcc, 30, (640, 360), True)
 
     # ************setting lane*************
     set_points(first_frame)
@@ -183,14 +180,16 @@ def main():
     for i in range(len(lanes)):
         lane_dirs[i] = collections.deque(maxlen=3)
 
+    visual = True
+    skip_frame = 2
+
     while(cap.isOpened()):
-        # start_time = time.perf_counter()
-        # ret = a boolean return value from getting the frame, frame = the current frame being projected in the video
+        fps = round(frame_per_second())
         ret, frame = cap.read()
         if not ret:
             break
         frame_num += 1
-        if frame_num % 1 != 0:
+        if frame_num % skip_frame != 0:
             continue
         bin_image = np.zeros((height, width))
         dir_image = np.zeros((height, width))
@@ -232,20 +231,22 @@ def main():
 
             dis = b - d
             a = c
-            # frame = cv2.line(frame, (a, b), (c, d), color, 2)
-            # origin = cv2.line(origin, (a, b), (c, d), color, 2)
-            # frame = cv2.circle(frame, (a, b), 3, color, -1)
-            # origin = cv2.circle(origin, (a, b), 3, color, -1)
+            frame = cv2.line(frame, (a, b), (c, d), color, 2)
+            origin = cv2.line(origin, (a, b), (c, d), color, 2)
+            frame = cv2.circle(frame, (a, b), 3, color, -1)
+            origin = cv2.circle(origin, (a, b), 3, color, -1)
 
             # moving distance is bigger than dis_move and lying on lane
             if dis > dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 100
-                cv2.arrowedLine(frame, (a, b), (c, d), [240, 30, 30], 2, tipLength=0.5)
-                cv2.arrowedLine(origin, (a, b), (c, d), [240, 30, 30], 2, tipLength=0.5)
+                if visual:
+                    cv2.arrowedLine(frame, (c, d), (a, b), [240, 30, 30], 2, tipLength=0.5)
+                    cv2.arrowedLine(origin, (c, d), (a, b), [240, 30, 30], 2, tipLength=0.5)
             elif dis < - dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 200
-                cv2.arrowedLine(frame, (a, b), (c, d), [30, 30, 240], 2, tipLength=0.5)
-                cv2.arrowedLine(origin, (a, b), (c, d), [30, 30, 240], 2, tipLength=0.5)
+                if visual:
+                    cv2.arrowedLine(frame, (c, d), (a, b), [30, 30, 240], 2, tipLength=0.5)
+                    cv2.arrowedLine(origin, (c, d), (a, b), [30, 30, 240], 2, tipLength=0.5)
 
         for x, y, w, h in bboxes:
             car = bin_image[y:y + h, x:x + w]
@@ -289,11 +290,12 @@ def main():
         for xyxy, (objectID, centroid) in zip(xyxy_bboxes, objects.items()):
             # draw both the ID of the object and the centroid of the
             x1, y1, x2, y2 = xyxy
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5)
-            cv2.rectangle(origin, (x1, y1), (x2, y2), color, 5)
-            text = "ID {}".format(objectID + 1)
-            cv2.putText(origin, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-            cv2.circle(origin, (centroid[0], centroid[1]), 4, color, -1)
+            if visual:
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5)
+                cv2.rectangle(origin, (x1, y1), (x2, y2), color, 5)
+                text = "ID {}".format(objectID + 1)
+                cv2.putText(origin, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                cv2.circle(origin, (centroid[0], centroid[1]), 4, color, -1)
             obj_cx, obj_cy = centroid[0], centroid[1]
 
             tmp = dir_image[y: y + h, x: x + w]
@@ -309,39 +311,15 @@ def main():
                     # not counted and center on lane
                     if objectID not in list(counted_ids.values()) and lane_id is not None:
                         if blue_direc_count > red_direc_count:
-                            # add to lane
-                            lane_copy = copy.copy(lane_dirs[lane_id])
-                            lane_copy.append(100)
-                            # lane has not 3 item
-                            if len(lane_copy) < 3:
-                                count_down += 1
-                                lane_dirs[lane_id].append(100)
-                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                counted_ids[objectID] = objectID
-                            elif len(lane_copy) == 3 and lane_copy.count(100) == 3:
-                                count_down += 1
-                                lane_dirs[lane_id].append(100)
-                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                counted_ids[objectID] = objectID
+                            count_down += 1
+                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            counted_ids[objectID] = objectID
                         elif blue_direc_count < red_direc_count:
-                            # add to lane
-                            lane_copy = copy.copy(lane_dirs[lane_id])
-                            lane_copy.append(200)
-                            # lane has not 3 item
-                            if len(lane_copy) < 3:
-                                count_up += 1
-                                lane_dirs[lane_id].append(200)
-                                cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                counted_ids[objectID] = objectID
-                            elif len(lane_copy) == 3 and lane_copy.count(200) == 3:
-                                count_up += 1
-                                lane_dirs[lane_id].append(200)
-                                cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                counted_ids[objectID] = objectID
+                            count_up += 1
+                            cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                            counted_ids[objectID] = objectID
         # print(counted_ids)
         # print(lane_dirs)
         # ******** Counting **********
@@ -381,8 +359,6 @@ def main():
         # end_time = time.perf_counter()
         # elapsed_time = end_time - start_time
         # fps = round(1 / elapsed_time)
-        fps = round(frame_per_second())
-
         cv2.putText(origin,
                     text='FPS:' + str(fps),
                     org=(10, 30),
@@ -402,8 +378,8 @@ def main():
         # Opens a new window and displays the output frame
         frame = draw_lanes(frame, lanes)
         origin = draw_lanes(origin, lanes)
-        frame = draw_det_rois(frame, det_rois)
-        origin = draw_det_rois(origin, det_rois)
+        # frame = draw_det_rois(frame, det_rois)
+        # origin = draw_det_rois(origin, det_rois)
         binary = one_channel_to_three_channel(bin_image, frame)
         center = one_channel_to_three_channel(cen_image, frame)
         direct = one_channel_to_three_channel(dir_image, frame)
