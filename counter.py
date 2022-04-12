@@ -37,6 +37,7 @@ class Counter():
         self.iter = 0
         self.frameNum = 0
         self.stableNum = 2
+        self.carCoords = collections.defaultdict(list)
 
         os.makedirs('./outputs/', exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -75,6 +76,11 @@ class Counter():
         self.cap.release()
         cv2.destroyAllWindows()
 
+    def settingLaneDirs(self):
+        self.laneDirs = {}
+        for landId in range(len(self.lanes)):
+            self.laneDirs[landId] = 0
+
     def settingLanes(self, points):
         self.lanes = {}
         self.detRois = {}
@@ -103,6 +109,9 @@ class Counter():
             xmax, ymax = max(xlist), max(ylist)
             self.detRois[i] = (xmin, ymin, xmax, ymax)
             self.lanes[i] = np.array(self.lanes[i])
+
+        # initial count for each lane
+        self.settingLaneDirs()
 
     def drawLanes(self, frame, visual=False):
         self.lanes_mask = np.zeros((self.height, self.width))
@@ -185,8 +194,6 @@ class Counter():
                 self.optImage[d, c] = 200
                 if visual:
                     cv2.arrowedLine(self.origin, (c, d), (a, b), [30, 30, 240], 2, tipLength=0.5)
-        if visual:
-            cv2.imshow(self.createCarDirect.__name__, self.optImage)
 
     def createBBox(self, visual=False):
         self.bboxes = list(map(lambda x: cv2.boundingRect(x), self.contours))
@@ -230,9 +237,9 @@ class Counter():
 
     def counting(self, visual=False):
         for xyxy, (objectID, centroid) in zip(self.xyxyBBoxes, self.objects.items()):
-            # obj_cx, obj_cy = centroid[0], centroid[1]
+            # objCx, objCy = centroid[0], centroid[1]
             x1, y1, x2, y2 = xyxy
-            obj_cx, obj_cy = (x1 + x2) // 2, (y1 + y2) // 2
+            objCx, objCy = (x1 + x2) // 2, (y1 + y2) // 2
             if visual:
                 # draw both the ID of the object and the centroid of the
                 cv2.rectangle(self.origin, (x1, y1), (x2, y2), self.color, 5)
@@ -248,35 +255,60 @@ class Counter():
                 if self.direction:
                     min_value = ymin
                     max_value = ymax
-                    obj_c = obj_cy
+                    obj_c = objCy
                 else:
                     min_value = xmin
                     max_value = xmax
-                    obj_c = obj_cx
+                    obj_c = objCx
 
                 if obj_c >= min_value and obj_c <= max_value:
-                    red_opt_count = np.count_nonzero(optTmp == 200)
-                    blue_opt_count = np.count_nonzero(optTmp == 100)
-                    lane_id = onLane(self.diffMask, self.lanes, obj_cx, obj_cy)
+                    redOptCount = np.count_nonzero(optTmp == 200)
+                    blueOptCount = np.count_nonzero(optTmp == 100)
+                    laneId = onLane(self.diffMask, self.lanes, objCx, objCy)
+                    if blueOptCount > redOptCount:
+                        self.laneDirs[laneId] += 1
+                    if blueOptCount < redOptCount:
+                        self.laneDirs[laneId] -= 1
+
+                    move1 = 0
+                    move2 = 0
+                    if len(self.carCoords[objectID]) >= 2:
+                        oldObjCx = self.carCoords[objectID][-1][0]
+                        oldObjCy = self.carCoords[objectID][-1][1]
+                        if self.direction:
+                            # current to previous
+                            move1 = objCy - oldObjCy
+                            # current to mean
+                            move2 = objCy - np.mean([coord[1] for coord in self.carCoords[objectID]])
+                        else:
+                            # current to previous
+                            move1 = objCx - oldObjCx
+                            # current to mean
+                            move2 = objCy - np.mean([coord[0] for coord in self.carCoords[objectID]])
+
+                    self.carCoords[objectID].append((objCx, objCy))
+                    if abs(move1) > 50:
+                        if objectID in self.countedIds.keys():
+                            del self.countedIds[objectID]
 
                     # not counted and center on lane
-                    if objectID not in list(self.countedIds.values()) and lane_id is not None:
+                    if objectID not in list(self.countedIds.values()) and laneId is not None:
                         if objectID not in self.idStats.keys():
                             self.idStats[objectID] = collections.deque(maxlen=self.stableNum)
 
-                        if blue_opt_count > red_opt_count:
+                        if blueOptCount > redOptCount and self.laneDirs[laneId] > 0 and move2 > 0:
                             self.idStats[objectID].append(1)
                             if len(self.idStats[objectID]) == self.stableNum and self.idStats[objectID].count(1) == self.stableNum:
                                 self.countDown += 1
                                 self.countedIds[objectID] = objectID
-                                cv2.circle(self.origin, center=(obj_cx, obj_cy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                                cv2.circle(self.origin, center=(obj_cx, obj_cy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        elif blue_opt_count < red_opt_count:
+                                cv2.circle(self.origin, center=(objCx, objCy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(self.origin, center=(objCx, objCy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                        elif blueOptCount < redOptCount and self.laneDirs[laneId] < 0 and move2 < 0:
                             self.idStats[objectID].append(-1)
                             if len(self.idStats[objectID]) == self.stableNum and self.idStats[objectID].count(-1) == self.stableNum:
                                 self.countUp += 1
                                 self.countedIds[objectID] = objectID
-                                cv2.circle(self.origin, center=(obj_cx, obj_cy), radius=5, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(self.origin, center=(objCx, objCy), radius=5, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
 
     def getFPS(self):
         fps = round(self.fps())

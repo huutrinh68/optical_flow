@@ -40,7 +40,7 @@ def main():
         counter.opticalFlow()
 
         # create car move direction
-        counter.createCarDirect(visual=False)
+        counter.createCarDirect(visual=True)
 
         # create bbox from diffmask
         counter.createBBox(visual=False)
@@ -49,7 +49,7 @@ def main():
         counter.tracking()
 
         # counting
-        counter.counting(visual=False)
+        counter.counting(visual=True)
 
         # visual
         counter.showResult()
