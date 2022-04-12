@@ -74,8 +74,8 @@ def background_subtraction(bgs, frame):
     frame = cv2.GaussianBlur(frame, (3, 3), cv2.BORDER_DEFAULT)
     binary_mask = bgs.apply(frame)
     # smaller mask
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    binary_mask = cv2.erode(binary_mask, kernel, iterations=3)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    binary_mask = cv2.erode(binary_mask, kernel, iterations=1)
     # fill inside mask
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
     binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_CLOSE, kernel_close)
@@ -122,9 +122,10 @@ def main():
     # Parameters for Lucas-Kanade optical flow
     lk_params = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     # The video feed is read in as a VideoCapture object
-    # video_path = "./20211215_102922.mp4"
-    # video_path = "./20211211_194628.mp4"
-    video_path = "./VID20220410163628.mp4"
+    # video_path = "./daytime1.mp4"
+    # video_path = "./nighttime1.mp4"
+    video_path = "./daytime2.mp4"
+    # video_path = "./daytime3.mov"
     cap = cv2.VideoCapture(video_path)
     scale = 3
 
@@ -136,8 +137,8 @@ def main():
 
     height, width = first_frame.shape[:2]
     # min size of car
-    w1_size = 70
-    h1_size = 70
+    w1_size = 30
+    h1_size = 30
     count_down = 0
     count_up = 0
     # movement quantity
@@ -153,23 +154,25 @@ def main():
     set_points(first_frame)
     lanes = {}
     det_rois = {}
+    direction = 1
     assert len(points) % 4 == 0, "Please check your points input!"
     for i in range(len(points) // 4):
         lanes[i] = [points[i * 4 + j] for j in range(4)]
     if len(lanes) == 0:
-        if video_path == "./20211215_102922.mp4":
+        if video_path == "./daytime1.mp4":
             lanes = {
                 0: [[120, 126], [242, 135], [243, 232], [63, 229]],
                 1: [[294, 132], [412, 129], [464, 222], [304, 220]],
             }
-        elif video_path == "./20211211_194628.mp4":
+        elif video_path == "./nighttime1.mp4":
             lanes = {
                 0: [[43, 160], [279, 164], [287, 295], [1, 296]],
                 1: [[349, 137], [476, 138], [537, 283], [371, 282]]
             }
-        elif video_path == "./VID20220410163628.mp4":
+        elif video_path == "./daytime2.mp4":
             lanes = {
-                0: [[59, 345], [234, 349], [308, 444], [3, 447]]
+                0: [[33, 364], [146, 370], [148, 461], [1, 467]],
+                1: [[152, 466], [333, 460], [358, 543], [154, 549]]
             }
     for i in range(len(lanes)):
         xlist = [p[0] for p in lanes[i]]
@@ -182,6 +185,7 @@ def main():
     # ************setting lane*************
 
     bgs = cv2.createBackgroundSubtractorMOG2()
+    # bgs = cv2.bgsegm.createBackgroundSubtractorGSOC()
 
     frame_num = 0
     ct = CentroidTracker()
@@ -195,9 +199,10 @@ def main():
 
     visual = True
     skip_frame = 2
+    id_stats = {}
+    save_num = 0
 
     while(cap.isOpened()):
-        fps = round(frame_per_second())
         ret, frame = cap.read()
         if not ret:
             break
@@ -207,8 +212,21 @@ def main():
         bin_image = np.zeros((height, width))
         dir_image = np.zeros((height, width))
         cen_image = np.zeros((height, width))
+        opt_image = np.zeros((height, width))
         frame = cv2.resize(frame, (frame.shape[1] // scale, frame.shape[0] // scale))
         origin = frame.copy()
+
+        # ****** create mask ******
+        # mask = bgs.apply(frame)
+        # bg = bgs.getBackgroundImage()
+        # bg = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY)
+        # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # mask = cv2.absdiff(gray, bg)
+        # mask[mask < 10] = 0
+        # mask[mask >= 10] = 255
+        # cv2.imshow("mask", mask)
+        # ****** create mask ******
+
         # ****** setting lane******
         lanes_mask = np.zeros((height, width))
         for lane in lanes.values():
@@ -242,21 +260,28 @@ def main():
             a, b = new.ravel()
             c, d = old.ravel()
 
-            dis = b - d
-            a = c
-            frame = cv2.line(frame, (a, b), (c, d), color, 2)
-            origin = cv2.line(origin, (a, b), (c, d), color, 2)
-            frame = cv2.circle(frame, (a, b), 3, color, -1)
-            origin = cv2.circle(origin, (a, b), 3, color, -1)
+            if direction:
+                dis = b - d
+                a = c
+            else:
+                dis = a - c
+                b = d
+            if visual:
+                frame = cv2.line(frame, (a, b), (c, d), color, 2)
+                origin = cv2.line(origin, (a, b), (c, d), color, 2)
+                frame = cv2.circle(frame, (a, b), 3, color, -1)
+                # origin = cv2.circle(origin, (a, b), 3, color, -1)
 
             # moving distance is bigger than dis_move and lying on lane
             if dis > dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 100
+                opt_image[d, c] = 100
                 if visual:
                     cv2.arrowedLine(frame, (c, d), (a, b), [240, 30, 30], 2, tipLength=0.5)
                     cv2.arrowedLine(origin, (c, d), (a, b), [240, 30, 30], 2, tipLength=0.5)
             elif dis < - dis_move and on_lane(frame, lanes, c, d) is not None:
                 dir_image[d - delta2:d + delta2, int(c) - delta2:int(c) + delta2] = 200
+                opt_image[d, c] = 200
                 if visual:
                     cv2.arrowedLine(frame, (c, d), (a, b), [30, 30, 240], 2, tipLength=0.5)
                     cv2.arrowedLine(origin, (c, d), (a, b), [30, 30, 240], 2, tipLength=0.5)
@@ -307,32 +332,57 @@ def main():
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 5)
                 cv2.rectangle(origin, (x1, y1), (x2, y2), color, 5)
                 text = "ID {}".format(objectID + 1)
-                cv2.putText(origin, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-                cv2.circle(origin, (centroid[0], centroid[1]), 4, color, -1)
+                # cv2.putText(origin, text, (centroid[0] - 10, centroid[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                cv2.putText(origin, text, ((x2 + x1) // 2 - 10, (y2 + y1) // 2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                # cv2.circle(origin, (centroid[0], centroid[1]), 4, color, -1)
+                cv2.circle(origin, ((x2 + x1) // 2, (y2 + y1) // 2), 4, color, -1)
             obj_cx, obj_cy = centroid[0], centroid[1]
 
-            tmp = dir_image[y: y + h, x: x + w]
-            tmp = tmp.astype(np.uint8)
+            dir_tmp = dir_image[y1: y2, x1: x2]
+            dir_tmp = dir_tmp.astype(np.uint8)
+            opt_tmp = opt_image[y1: y2, x1: x2]
+            opt_tmp = opt_tmp.astype(np.uint8)
 
             for det_roi in det_rois.values():
                 xmin, ymin, xmax, ymax = det_roi
-                if obj_cy >= ymin and obj_cy <= ymax:
-                    red_direc_count = np.count_nonzero(tmp == 200)
-                    blue_direc_count = np.count_nonzero(tmp == 100)
+                if direction:
+                    min_value = ymin
+                    max_value = ymax
+                    obj_c = obj_cy
+                else:
+                    min_value = xmin
+                    max_value = xmax
+                    obj_c = obj_cx
+
+                if obj_c >= min_value and obj_c <= max_value:
+                    # red_direc_count = np.count_nonzero(dir_tmp == 200)
+                    # blue_direc_count = np.count_nonzero(dir_tmp == 100)
+                    red_opt_count = np.count_nonzero(opt_tmp == 200)
+                    blue_opt_count = np.count_nonzero(opt_tmp == 100)
                     lane_id = on_lane(frame, lanes, obj_cx, obj_cy)
 
                     # not counted and center on lane
                     if objectID not in list(counted_ids.values()) and lane_id is not None:
-                        if blue_direc_count > red_direc_count:
-                            count_down += 1
-                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            counted_ids[objectID] = objectID
-                        elif blue_direc_count < red_direc_count:
-                            count_up += 1
-                            cv2.circle(frame, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            cv2.circle(origin, center=(obj_cx, obj_cy), radius=40, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                            counted_ids[objectID] = objectID
+                        if objectID not in id_stats.keys():
+                            id_stats[objectID] = collections.deque(maxlen=2)
+
+                        # if blue_direc_count > red_direc_count:
+                        if blue_opt_count > red_opt_count:
+                            id_stats[objectID].append(1)
+                            if len(id_stats[objectID]) == 2 and id_stats[objectID].count(1) == 2:
+                                count_down += 1
+                                counted_ids[objectID] = objectID
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                        # elif blue_direc_count < red_direc_count:
+                        elif blue_opt_count < red_opt_count:
+                            id_stats[objectID].append(-1)
+                            if len(id_stats[objectID]) == 2 and id_stats[objectID].count(-1) == 2:
+                                count_up += 1
+                                counted_ids[objectID] = objectID
+                                cv2.circle(frame, center=(obj_cx, obj_cy), radius=5, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                                cv2.circle(origin, center=(obj_cx, obj_cy), radius=5, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+        # print(counted_ids)
         # ******** Counting **********
 
         # Updates previous frame
@@ -340,12 +390,20 @@ def main():
         prev = good_new.reshape(-1, 1, 2)
 
         # put text
-        put_text(origin, 'down' + str(count_down), (origin.shape[1] * 2 // 3, origin.shape[0] - 10), (0, 255, 255))
-        put_text(frame, 'down' + str(count_down), (frame.shape[1] * 2 // 3, frame.shape[0] - 10), (0, 255, 255))
-        put_text(origin, 'up' + str(count_up), (origin.shape[1] // 4, origin.shape[0] - 10), (0, 255, 255))
-        put_text(frame, 'up' + str(count_up), (frame.shape[1] // 4, frame.shape[0] - 10), (0, 255, 255))
-        put_text(origin, 'FPS: ' + str(fps), (10, 30), (200, 255, 255))
-        put_text(frame, 'FPS: ' + str(fps), (10, 30), (200, 255, 255))
+        if direction:
+            put_text(origin, 'Down:' + str(count_down), (origin.shape[1] // 2, origin.shape[0] - 10), (0, 255, 255))
+            put_text(frame, 'Down:' + str(count_down), (frame.shape[1] // 2, frame.shape[0] - 10), (0, 255, 255))
+            put_text(origin, 'Up:' + str(count_up), (origin.shape[1] // 10, origin.shape[0] - 10), (0, 255, 255))
+            put_text(frame, 'Up:' + str(count_up), (frame.shape[1] // 10, frame.shape[0] - 10), (0, 255, 255))
+        else:
+            put_text(origin, 'Right:' + str(count_down), (origin.shape[1] // 2, origin.shape[0] - 10), (0, 255, 255))
+            put_text(frame, 'Right:' + str(count_down), (frame.shape[1] // 2, frame.shape[0] - 10), (0, 255, 255))
+            put_text(origin, 'Left' + str(count_up), (origin.shape[1] // 10, origin.shape[0] - 10), (0, 255, 255))
+            put_text(frame, 'Left' + str(count_up), (frame.shape[1] // 10, frame.shape[0] - 10), (0, 255, 255))
+
+        fps = round(frame_per_second())
+        put_text(origin, 'FPS: ' + str(fps), (10, 30), (0, 255, 255))
+        put_text(frame, 'FPS: ' + str(fps), (10, 30), (0, 255, 255))
 
         # Opens a new window and displays the output frame
         frame = draw_lanes(frame, lanes)
@@ -358,11 +416,14 @@ def main():
         result1 = hconcat_resize([origin, binary])
         # result1 = hconcat_resize([frame, binary])
         result2 = hconcat_resize([direct, center])
-        result = cv2.vconcat([result1, result2])
+        # result = cv2.vconcat([result1, result2])
+        result = cv2.hconcat([result1, result2])
         cv2.imshow("result", result)
-        writer.write(result)
-        cv2.imwrite("./outputs/frame_num_{}.png".format(str(frame_num).zfill(5)), result)
-        key = cv2.waitKey(10) & 0xFF
+        writer.write(origin)
+        # writer.write(result)
+        cv2.imwrite("./outputs/frame_num_{}.png".format(str(save_num).zfill(5)), origin)
+        save_num += 1
+        key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
         if key == ord('p'):
