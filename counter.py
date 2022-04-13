@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 from utils import onLane, putText, FPS, hconcatResize, toThreeChannel
 import cv2
@@ -37,6 +38,7 @@ class Counter():
         self.frameNum = 0
         self.stableNum = 2
         self.carCoords = collections.defaultdict(list)
+        self.skipedId = []
 
         os.makedirs('./outputs/', exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -233,19 +235,12 @@ class Counter():
         # xywh -> xyxy
         self.xyxyBBoxes = [(x1, y1, x1 + w1, y1 + h1) for (x1, y1, w1, h1) in self.bboxes if (w1 > self.wsize and h1 > self.hsize)]
         self.objects = self.ct.update(self.xyxyBBoxes)
-        # self.objects = self.ct.update(self.xyxyBBoxes, self.countedIds)
 
     def counting(self, visual=False):
         for xyxy, (objectID, centroid) in zip(self.xyxyBBoxes, self.objects.items()):
             # objCx, objCy = centroid[0], centroid[1]
             x1, y1, x2, y2 = xyxy
             objCx, objCy = (x1 + x2) // 2, (y1 + y2) // 2
-            if visual:
-                # draw both the ID of the object and the centroid of the
-                cv2.rectangle(self.origin, (x1, y1), (x2, y2), self.color, 5)
-                text = "ID {}".format(objectID + 1)
-                cv2.putText(self.origin, text, ((x2 + x1) // 2 - 10, (y2 + y1) // 2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.color, 2)
-                cv2.circle(self.origin, ((x2 + x1) // 2, (y2 + y1) // 2), 4, self.color, -1)
 
             optTmp = self.optImage[y1: y2, x1: x2]
             optTmp = optTmp.astype(np.uint8)
@@ -272,46 +267,63 @@ class Counter():
 
                     move1 = 0
                     move2 = 0
-                    thres = 0
+                    move3 = 0
+                    thres1 = 0
+                    thres2 = 0
                     if len(self.carCoords[objectID]) >= 2:
                         oldObjCx = self.carCoords[objectID][-1][0]
                         oldObjCy = self.carCoords[objectID][-1][1]
                         if self.direction:
                             # current to previous
                             move1 = objCy - oldObjCy
+                            thres1 = (ymax - ymin) * 0.9
+
+                            move2 = objCx - oldObjCx
+                            thres2 = (xmax - xmin) * 0.9
+
                             # current to mean
-                            move2 = objCy - np.mean([coord[1] for coord in self.carCoords[objectID]])
-                            thres = (ymax - ymin) * 0.8
+                            move3 = objCy - np.mean([coord[1] for coord in self.carCoords[objectID]])
                         else:
                             # current to previous
                             move1 = objCx - oldObjCx
+                            thres1 = (xmax - xmin)
+
+                            move2 = objCy - oldObjCy
+                            thres2 = (ymax - ymin)
                             # current to mean
-                            move2 = objCy - np.mean([coord[0] for coord in self.carCoords[objectID]])
-                            thres = (xmax - xmin) * 0.8
+                            move3 = objCx - np.mean([coord[0] for coord in self.carCoords[objectID]])
 
                     self.carCoords[objectID].append((objCx, objCy))
-                    if abs(move1) > thres:
-                        if objectID in self.countedIds.keys():
-                            del self.countedIds[objectID]
+                    if abs(move1) > thres1 or abs(move2) > thres2:
+                        del self.carCoords[objectID][-1]
+                        self.skipedId.append(objectID)
+                        continue
 
                     # not counted and center on lane
                     if objectID not in list(self.countedIds.values()) and laneId is not None:
                         if objectID not in self.idStats.keys():
                             self.idStats[objectID] = collections.deque(maxlen=self.stableNum)
 
-                        if blueOptCount > redOptCount and self.laneDirs[laneId] > 0 and move2 > 0:
+                        if blueOptCount > redOptCount and self.laneDirs[laneId] > 0 and move3 > 0:
                             self.idStats[objectID].append(1)
                             if len(self.idStats[objectID]) == self.stableNum and self.idStats[objectID].count(1) == self.stableNum:
                                 self.countDown += 1
                                 self.countedIds[objectID] = objectID
                                 cv2.circle(self.origin, center=(objCx, objCy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
                                 cv2.circle(self.origin, center=(objCx, objCy), radius=5, color=(240, 30, 30), thickness=-1, lineType=cv2.LINE_4, shift=0)
-                        elif blueOptCount < redOptCount and self.laneDirs[laneId] < 0 and move2 < 0:
+                        elif blueOptCount < redOptCount and self.laneDirs[laneId] < 0 and move3 < 0:
                             self.idStats[objectID].append(-1)
                             if len(self.idStats[objectID]) == self.stableNum and self.idStats[objectID].count(-1) == self.stableNum:
                                 self.countUp += 1
                                 self.countedIds[objectID] = objectID
                                 cv2.circle(self.origin, center=(objCx, objCy), radius=5, color=(30, 30, 240), thickness=-1, lineType=cv2.LINE_4, shift=0)
+                if visual and objectID not in self.countedIds.keys() and objectID not in self.skipedId:
+                    # draw both the ID of the object and the centroid of the
+                    cv2.rectangle(self.origin, (x1, y1), (x2, y2), self.color, 5)
+                    text = "ID {}".format(objectID + 1)
+                    cv2.putText(self.origin, text, (objCx - 10, objCy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.color, 2)
+                    cv2.circle(self.origin, (objCx, objCy), 4, self.color, -1)
+        # print(self.carCoords)
 
     def getFPS(self):
         fps = round(self.fps())

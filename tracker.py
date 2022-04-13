@@ -34,7 +34,7 @@ class CentroidTracker():
         del self.objects[objectID]
         del self.disappeared[objectID]
 
-    def update(self, rects, countedIds={}):
+    def update(self, rects):
         # check to see if the list of input bounding box rectangles
         # is empty
         if len(rects) == 0:
@@ -141,8 +141,7 @@ class CentroidTracker():
                     # check to see if the number of consecutive
                     # frames the object has been marked "disappeared"
                     # for warrants deregistering the object
-                    # if self.disappeared[objectID] > self.maxDisappeared:
-                    if self.disappeared[objectID] > self.maxDisappeared or objectID in countedIds.keys():
+                    if self.disappeared[objectID] > self.maxDisappeared:
                         self.deregister(objectID)
             # otherwise, if the number of input centroids is greater
             # than the number of existing object centroids we need to
