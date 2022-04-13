@@ -2,10 +2,11 @@
 from scipy.spatial import distance as dist
 from collections import OrderedDict
 import numpy as np
+import math
 
 
 class CentroidTracker():
-    def __init__(self, maxDisappeared=3, minDistance=150):
+    def __init__(self, maxDisappeared=3, minDistance=None):
         # initialize the next unique object ID along with two ordered
         # dictionaries used to keep track of mapping a given object
         # ID to its centroid and number of consecutive frames it has
@@ -13,14 +14,12 @@ class CentroidTracker():
         self.nextObjectID = 0
         self.objects = OrderedDict()
         self.disappeared = OrderedDict()
+        self.minDistance = minDistance
 
         # store the number of maximum consecutive frames a given
         # object is allowed to be marked as "disappeared" until we
         # need to deregister the object from tracking
         self.maxDisappeared = maxDisappeared
-
-        # the minimum distance between new object and closest object
-        self.minDistance = minDistance
 
     def register(self, centroid):
         # when registering an object we use the next available object
@@ -35,7 +34,7 @@ class CentroidTracker():
         del self.objects[objectID]
         del self.disappeared[objectID]
 
-    def update(self, rects):
+    def update(self, rects, countedIds={}):
         # check to see if the list of input bounding box rectangles
         # is empty
         if len(rects) == 0:
@@ -108,7 +107,11 @@ class CentroidTracker():
                 # if we have already examined either the row or
                 # column value before, ignore it
                 # val
-                if row in usedRows or col in usedCols or D[row][col] > self.minDistance:
+                if self.minDistance is not None:
+                    minDistance = self.minDistance
+                else:
+                    minDistance = math.sqrt((rects[col][2] - rects[col][0]) * (rects[col][3] - rects[col][1]))
+                if row in usedRows or col in usedCols or D[row][col] >= minDistance:
                     continue
                 # otherwise, grab the object ID for the current row,
                 # set its new centroid, and reset the disappeared
@@ -138,7 +141,8 @@ class CentroidTracker():
                     # check to see if the number of consecutive
                     # frames the object has been marked "disappeared"
                     # for warrants deregistering the object
-                    if self.disappeared[objectID] > self.maxDisappeared:
+                    # if self.disappeared[objectID] > self.maxDisappeared:
+                    if self.disappeared[objectID] > self.maxDisappeared or objectID in countedIds.keys():
                         self.deregister(objectID)
             # otherwise, if the number of input centroids is greater
             # than the number of existing object centroids we need to

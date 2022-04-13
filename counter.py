@@ -18,7 +18,6 @@ class Counter():
         # optical flow
         self.featureParams = dict(maxCorners=300, qualityLevel=0.2, minDistance=2, blockSize=7)
         self.lkParams = dict(winSize=(15, 15), maxLevel=8, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-        self.marginOf = 50
 
         self.color = (0, 255, 0)
         self.direction = 1
@@ -203,13 +202,13 @@ class Counter():
             laneId = onLane(self.diffMask, self.lanes, x + w // 2, y + h // 2)
             # center in mask
             if laneId is not None:
-                xmin, ymin, xmax, ymax = self.detRois[laneId]
-                # top-down
-                if self.direction and (xmax - xmin) < 2 * w:
-                    continue
-                # left-right
-                if not self.direction and (ymax - ymin) < 2 * h:
-                    continue
+                # xmin, ymin, xmax, ymax = self.detRois[laneId]
+                # # top-down
+                # if self.direction and (xmax - xmin) < 2 * w:
+                #     continue
+                # # left-right
+                # if not self.direction and (ymax - ymin) < 2 * h:
+                #     continue
                 coords = cv2.findNonZero(car)
                 car_cx = []
                 car_cy = []
@@ -234,6 +233,7 @@ class Counter():
         # xywh -> xyxy
         self.xyxyBBoxes = [(x1, y1, x1 + w1, y1 + h1) for (x1, y1, w1, h1) in self.bboxes if (w1 > self.wsize and h1 > self.hsize)]
         self.objects = self.ct.update(self.xyxyBBoxes)
+        # self.objects = self.ct.update(self.xyxyBBoxes, self.countedIds)
 
     def counting(self, visual=False):
         for xyxy, (objectID, centroid) in zip(self.xyxyBBoxes, self.objects.items()):
@@ -272,6 +272,7 @@ class Counter():
 
                     move1 = 0
                     move2 = 0
+                    thres = 0
                     if len(self.carCoords[objectID]) >= 2:
                         oldObjCx = self.carCoords[objectID][-1][0]
                         oldObjCy = self.carCoords[objectID][-1][1]
@@ -280,14 +281,16 @@ class Counter():
                             move1 = objCy - oldObjCy
                             # current to mean
                             move2 = objCy - np.mean([coord[1] for coord in self.carCoords[objectID]])
+                            thres = (ymax - ymin) * 0.8
                         else:
                             # current to previous
                             move1 = objCx - oldObjCx
                             # current to mean
                             move2 = objCy - np.mean([coord[0] for coord in self.carCoords[objectID]])
+                            thres = (xmax - xmin) * 0.8
 
                     self.carCoords[objectID].append((objCx, objCy))
-                    if abs(move1) > 50:
+                    if abs(move1) > thres:
                         if objectID in self.countedIds.keys():
                             del self.countedIds[objectID]
 
