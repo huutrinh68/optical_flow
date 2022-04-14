@@ -1,5 +1,4 @@
 import os
-import time
 import numpy as np
 from utils import onLane, putText, FPS, hconcatResize, toThreeChannel
 import cv2
@@ -8,11 +7,7 @@ import collections
 
 
 class Counter():
-    def __init__(self, videoPath, scale=3, skipFrame=2, outputName='demo.mp4'):
-        self.videoPath = videoPath
-        self.cap = cv2.VideoCapture(self.videoPath)
-        self.scale = scale
-        self.skipFrame = skipFrame
+    def __init__(self):
         self.bgs = cv2.createBackgroundSubtractorMOG2()
         # self.bgs = cv2.bgsegm.createBackgroundSubtractorGSOC()
 
@@ -42,67 +37,22 @@ class Counter():
 
         os.makedirs('./outputs/', exist_ok=True)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        # self.writer = cv2.VideoWriter(outputName, fourcc, 30, (1280, 720), True)
-        self.writer = cv2.VideoWriter(outputName, fourcc, 30, (640, 360), True)
+        self.writer = cv2.VideoWriter('demo.mp4', fourcc, 30, (640, 360), True)
 
-    def getFirstFrame(self):
-        ret, fisrtFrame = self.cap.read()
-        self.height, self.width = fisrtFrame.shape[0] // self.scale, fisrtFrame.shape[1] // self.scale
-        self.size = (self.width, self.height)
-        firstFrame = cv2.resize(fisrtFrame, self.size)
-        return firstFrame
+        # get from env
+        self.points = []
+        self.settingLanes()
 
-    def getCap(self):
-        return self.cap
-
-    def isOpened(self):
-        return self.cap.isOpened()
-
-    def getFrame(self):
-        ret, frame = self.cap.read()
-        if not ret:
-            return None
-        else:
-            frame = cv2.resize(frame, self.size)
-            self.origin = frame.copy()
-            self.optImage = np.zeros((self.height, self.width))
-            self.cenImage = np.zeros((self.height, self.width))
-            self.frameNum += 1
-            return frame
-
-    def skip(self):
-        return self.frameNum % self.skipFrame != 0
-
-    def releaseCap(self):
-        self.cap.release()
-        cv2.destroyAllWindows()
-
-    def settingLaneDirs(self):
-        self.laneDirs = {}
-        for landId in range(len(self.lanes)):
-            self.laneDirs[landId] = 0
-
-    def settingLanes(self, points):
+    def settingLanes(self):
         self.lanes = {}
         self.detRois = {}
-        for i in range(len(points) // 4):
-            self.lanes[i] = [points[i * 4 + j] for j in range(4)]
+        for i in range(len(self.points) // 4):
+            self.lanes[i] = [self.points[i * 4 + j] for j in range(4)]
         if len(self.lanes) == 0:
-            if self.videoPath == "./daytime1.mp4":
-                self.lanes = {
-                    0: [[120, 126], [242, 135], [243, 232], [63, 229]],
-                    1: [[294, 132], [412, 129], [464, 222], [304, 220]],
-                }
-            elif self.videoPath == "./nighttime1.mp4":
-                self.lanes = {
-                    0: [[43, 160], [279, 164], [287, 295], [1, 296]],
-                    1: [[349, 137], [476, 138], [537, 283], [371, 282]]
-                }
-            elif self.videoPath == "./daytime2.mp4":
-                self.lanes = {
-                    0: [[33, 364], [146, 370], [148, 461], [1, 467]],
-                    1: [[152, 466], [333, 460], [358, 543], [154, 549]]
-                }
+            self.lanes = {
+                0: [[33, 364], [146, 370], [148, 461], [1, 467]],
+                1: [[152, 466], [333, 460], [358, 543], [154, 549]]
+            }
         for i in range(len(self.lanes)):
             xlist = [p[0] for p in self.lanes[i]]
             ylist = [p[1] for p in self.lanes[i]]
@@ -112,14 +62,15 @@ class Counter():
             self.lanes[i] = np.array(self.lanes[i])
 
         # initial count for each lane
-        self.settingLaneDirs()
+        self.laneDirs = {}
+        for landId in range(len(self.lanes)):
+            self.laneDirs[landId] = 0
 
     def drawLanes(self, frame, visual=False):
         self.lanes_mask = np.zeros((self.height, self.width))
         for lane in self.lanes.values():
             cv2.fillPoly(self.lanes_mask, pts=[lane], color=255)
 
-        # self.lanes_mask = cv2.fillPoly(self.lanes_mask, pts=[list(lanes.values())[0]], color=255)
         _, self.lanesMask = cv2.threshold(self.lanes_mask, 0, 255, cv2.THRESH_BINARY)
 
         frame = frame.astype(np.uint8)
@@ -140,11 +91,14 @@ class Counter():
         # smaller mask
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         self.diffMask = cv2.erode(self.diffMask, kernel, iterations=1)
+
         # fill inside mask
         kernelClose = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (45, 45))
         self.diffMask = cv2.morphologyEx(self.diffMask, cv2.MORPH_CLOSE, kernelClose)
+
         # convert mask to binary
         _, self.diffMask = cv2.threshold(self.diffMask, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
         # smaller mask
         kernelErode = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
         self.diffMask = cv2.erode(self.diffMask, kernelErode, iterations=1)
@@ -155,8 +109,6 @@ class Counter():
 
     def opticalFlowInitial(self, frame):
         self.prevGray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        # TODO: remove this?
-        # self.prev = cv2.goodFeaturesToTrack(self.prevGray, mask=None, **self.featureParams)
 
     def opticalFlow(self):
         gray = cv2.cvtColor(self.extractedLaneFrame, cv2.COLOR_BGR2GRAY)
@@ -204,13 +156,6 @@ class Counter():
             laneId = onLane(self.diffMask, self.lanes, x + w // 2, y + h // 2)
             # center in mask
             if laneId is not None:
-                # xmin, ymin, xmax, ymax = self.detRois[laneId]
-                # # top-down
-                # if self.direction and (xmax - xmin) < 2 * w:
-                #     continue
-                # # left-right
-                # if not self.direction and (ymax - ymin) < 2 * h:
-                #     continue
                 coords = cv2.findNonZero(car)
                 car_cx = []
                 car_cy = []
@@ -260,9 +205,9 @@ class Counter():
                     redOptCount = np.count_nonzero(optTmp == 200)
                     blueOptCount = np.count_nonzero(optTmp == 100)
                     laneId = onLane(self.diffMask, self.lanes, objCx, objCy)
-                    if blueOptCount > redOptCount:
+                    if blueOptCount > redOptCount and laneId is not None:
                         self.laneDirs[laneId] += 1
-                    if blueOptCount < redOptCount:
+                    if blueOptCount < redOptCount and laneId is not None:
                         self.laneDirs[laneId] -= 1
 
                     move1 = 0
@@ -360,3 +305,42 @@ class Counter():
 
     def saveVideo(self):
         self.writer.write(self.origin)
+
+    def process(self, frame):
+        self.height, self.width = frame.shape[0], frame.shape[1]
+        self.origin = frame.copy()
+        self.optImage = np.zeros((self.height, self.width))
+        self.cenImage = np.zeros((self.height, self.width))
+
+        # initial optical flow
+        if self.frameNum == 0:
+            self.opticalFlowInitial(frame)
+
+        # extract lane area
+        self.drawLanes(frame, visual=False)
+
+        # extract diff mask on lane area
+        self.bgSubtraction(visual=False)
+
+        # apply optical flow on extracted lane area
+        self.opticalFlow()
+
+        # create car move direction
+        self.createCarDirect(visual=True)
+
+        # create bbox from diffmask
+        self.createBBox(visual=False)
+
+        # tracking
+        self.tracking()
+
+        # counting
+        self.counting(visual=True)
+
+        # visual
+        self.showResult()
+
+        # save result
+        self.saveImage()
+        self.saveVideo()
+        self.frameNum += 1
